@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,6 +42,10 @@ var dispatcherDefaultEnv = []defaultEnvEntry{
 	{key: "BUS_WORKERS_API_URL", value: "http://127.0.0.1:8090/local/v1"},
 	{key: "BUS_WORKERS_API_TOKEN_FILE", value: ".bus/tokens/local-events.jwt"},
 }
+
+// defaultBusHost is the loopback host used when BUS_HOST is unset.
+// Used by: dispatcherLocalHTTPURL.
+const defaultBusHost = "127.0.0.1"
 
 // Run dispatches to a "bus-<command>" executable located on PATH.
 func Run(args []string, env []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) int {
@@ -2535,23 +2540,63 @@ func overlayDotenvEnv(env []string, entries []dotenvEntry) []string {
 // Used by: Run after loadWorkingDirDotenv.
 func applyDispatcherDefaultEnv(env []string) []string {
 	existing := make(map[string]struct{}, len(env))
+	values := make(map[string]string, len(env))
 	for _, entry := range env {
 		if eq := strings.Index(entry, "="); eq > 0 {
-			existing[entry[:eq]] = struct{}{}
+			key := entry[:eq]
+			existing[key] = struct{}{}
+			values[key] = entry[eq+1:]
 		}
 	}
+	host := busHostFromEnv(values)
 	out := append([]string{}, env...)
 	for _, item := range dispatcherDefaultEnv {
-		if item.key == "" || item.value == "" {
+		value := dispatcherDefaultValue(item, host)
+		if item.key == "" || value == "" {
 			continue
 		}
 		if _, ok := existing[item.key]; ok {
 			continue
 		}
-		out = append(out, item.key+"="+item.value)
+		out = append(out, item.key+"="+value)
 		existing[item.key] = struct{}{}
 	}
 	return out
+}
+
+// busHostFromEnv returns the BUS_HOST value from the already-resolved process/.env map.
+// Used by: applyDispatcherDefaultEnv.
+func busHostFromEnv(values map[string]string) string {
+	if host := strings.TrimSpace(values["BUS_HOST"]); host != "" {
+		return host
+	}
+	return defaultBusHost
+}
+
+// dispatcherDefaultValue derives dispatcher defaults that depend on BUS_HOST.
+// Used by: applyDispatcherDefaultEnv.
+func dispatcherDefaultValue(item defaultEnvEntry, host string) string {
+	switch item.key {
+	case "BUS_EVENTS_API_URL":
+		return dispatcherLocalHTTPURL(host, "8081", "/local/v1")
+	case "BUS_WORKERS_API_URL":
+		return dispatcherLocalHTTPURL(host, "8090", "/local/v1")
+	default:
+		return item.value
+	}
+}
+
+// dispatcherLocalHTTPURL builds a local HTTP URL from a host, port, and path.
+// Used by: dispatcherDefaultValue.
+func dispatcherLocalHTTPURL(host string, port string, path string) string {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		host = defaultBusHost
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return "http://" + net.JoinHostPort(host, port) + path
 }
 
 // logCommandDuration emits one deterministic timing line for a completed dispatched command.

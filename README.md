@@ -49,8 +49,9 @@ Use `KEY=VALUE` or `export KEY=VALUE` lines; blank lines and `#` comments are
 ignored. The dispatcher does not filter names to Bus-specific variables; any
 valid environment variable name is passed through to the child command.
 
-After `.env` loading, `bus` supplies standard non-secret local client defaults
-for child commands when they are otherwise unset:
+After `.env` loading, `bus` supplies standard non-secret local client URL and
+token defaults for child commands when they are otherwise unset. With
+`BUS_HOST` unset, the effective URL defaults are:
 
 ```sh
 BUS_EVENTS_API_URL=http://127.0.0.1:8081/local/v1
@@ -59,9 +60,11 @@ BUS_WORKERS_API_URL=http://127.0.0.1:8090/local/v1
 BUS_WORKERS_API_TOKEN_FILE=.bus/tokens/local-events.jwt
 ```
 
-These are runtime defaults, not `.env` entries. Override them only when a
-workspace needs a non-standard local endpoint, token path, or remote service.
-Precedence is process environment, then `.env`, then dispatcher defaults.
+`BUS_HOST` is optional; when `.env` or the process environment sets it, the
+dispatcher derives the local Events and Workers API URLs from that host. These
+are runtime defaults, not `.env` entries. Override them only when a workspace
+needs a non-standard local endpoint, token path, or remote service. Precedence
+is process environment, then `.env`, then dispatcher defaults.
 
 Nested command families still dispatch to the first command word owner. For
 example:

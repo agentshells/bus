@@ -371,6 +371,7 @@ func TestRunAddsLocalClientDefaultsForDispatchedCommand(t *testing.T) {
 	buildFakeEnvSubcommand(t, tempDir, "env")
 	workspace := t.TempDir()
 	env := prependPath(os.Environ(), tempDir)
+	env = unsetEnv(env, "BUS_HOST")
 
 	withChdir(t, workspace, func() {
 		var stdout bytes.Buffer
@@ -388,6 +389,36 @@ func TestRunAddsLocalClientDefaultsForDispatchedCommand(t *testing.T) {
 		}, "\n")
 		if stdout.String() != want {
 			t.Fatalf("unexpected default env output:\nwant %q\ngot  %q", want, stdout.String())
+		}
+	})
+}
+
+func TestRunDerivesLocalClientDefaultsFromBusHost(t *testing.T) {
+	tempDir := t.TempDir()
+	buildFakeEnvSubcommand(t, tempDir, "env")
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, ".env"), []byte("BUS_HOST=127.0.0.2\n"), 0o600); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+	env := prependPath(os.Environ(), tempDir)
+	env = unsetEnv(env, "BUS_EVENTS_API_URL")
+	env = unsetEnv(env, "BUS_WORKERS_API_URL")
+
+	withChdir(t, workspace, func() {
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		code := dispatch.Run([]string{"bus", "env", "BUS_HOST", "BUS_EVENTS_API_URL", "BUS_WORKERS_API_URL"}, env, nil, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("expected exit code 0, got %d (stderr: %q)", code, stderr.String())
+		}
+		want := strings.Join([]string{
+			"BUS_HOST=127.0.0.2",
+			"BUS_EVENTS_API_URL=http://127.0.0.2:8081/local/v1",
+			"BUS_WORKERS_API_URL=http://127.0.0.2:8090/local/v1",
+			"",
+		}, "\n")
+		if stdout.String() != want {
+			t.Fatalf("unexpected BUS_HOST default env output:\nwant %q\ngot  %q", want, stdout.String())
 		}
 	})
 }
@@ -1030,6 +1061,18 @@ func setEnv(env []string, key, value string) []string {
 	}
 	if !found {
 		updated = append(updated, prefix+value)
+	}
+	return updated
+}
+
+func unsetEnv(env []string, key string) []string {
+	prefix := key + "="
+	updated := make([]string, 0, len(env))
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			continue
+		}
+		updated = append(updated, entry)
 	}
 	return updated
 }
