@@ -61,10 +61,12 @@ BUS_WORKERS_API_TOKEN_FILE=.bus/tokens/local-events.jwt
 ```
 
 `BUS_HOST` is optional; when `.env` or the process environment sets it, the
-dispatcher derives the local Events and Workers API URLs from that host. These
-are runtime defaults, not `.env` entries. Override them only when a workspace
-needs a non-standard local endpoint, token path, or remote service. Precedence
-is process environment, then `.env`, then dispatcher defaults.
+dispatcher derives the local Events and Workers API URLs from that host. When
+present, `BUS_EVENTS_URL` or `BUS_EVENTS_PORT` selects the Events endpoint, and
+`BUS_API_PORT` selects the Workers/API endpoint. These are runtime defaults,
+not `.env` entries. Override them only when a workspace needs a non-standard
+local endpoint, token path, or remote service. Precedence is process
+environment, then `.env`, then dispatcher defaults.
 
 Nested command families still dispatch to the first command word owner. For
 example:

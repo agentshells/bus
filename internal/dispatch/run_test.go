@@ -423,6 +423,70 @@ func TestRunDerivesLocalClientDefaultsFromBusHost(t *testing.T) {
 	})
 }
 
+func TestRunDerivesLocalClientDefaultsFromConfiguredLocalPorts(t *testing.T) {
+	tempDir := t.TempDir()
+	buildFakeEnvSubcommand(t, tempDir, "env")
+	workspace := t.TempDir()
+	dotenv := strings.Join([]string{
+		"BUS_HOST=127.0.0.2",
+		"BUS_EVENTS_PORT=18181",
+		"BUS_API_PORT=18190",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(workspace, ".env"), []byte(dotenv), 0o600); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+	env := prependPath(os.Environ(), tempDir)
+	env = unsetEnv(env, "BUS_EVENTS_API_URL")
+	env = unsetEnv(env, "BUS_WORKERS_API_URL")
+
+	withChdir(t, workspace, func() {
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		code := dispatch.Run([]string{"bus", "env", "BUS_HOST", "BUS_EVENTS_API_URL", "BUS_WORKERS_API_URL"}, env, nil, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("expected exit code 0, got %d (stderr: %q)", code, stderr.String())
+		}
+		want := strings.Join([]string{
+			"BUS_HOST=127.0.0.2",
+			"BUS_EVENTS_API_URL=http://127.0.0.2:18181/local/v1",
+			"BUS_WORKERS_API_URL=http://127.0.0.2:18190/local/v1",
+			"",
+		}, "\n")
+		if stdout.String() != want {
+			t.Fatalf("unexpected configured-port default env output:\nwant %q\ngot  %q", want, stdout.String())
+		}
+	})
+}
+
+func TestRunDerivesEventsAPIURLFromConfiguredEventsURL(t *testing.T) {
+	tempDir := t.TempDir()
+	buildFakeEnvSubcommand(t, tempDir, "env")
+	workspace := t.TempDir()
+	dotenv := strings.Join([]string{
+		"BUS_HOST=127.0.0.2",
+		"BUS_EVENTS_PORT=18181",
+		"BUS_EVENTS_URL=http://events.example.test/local/v1",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(workspace, ".env"), []byte(dotenv), 0o600); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+	env := prependPath(os.Environ(), tempDir)
+	env = unsetEnv(env, "BUS_EVENTS_API_URL")
+
+	withChdir(t, workspace, func() {
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		code := dispatch.Run([]string{"bus", "env", "BUS_EVENTS_API_URL"}, env, nil, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("expected exit code 0, got %d (stderr: %q)", code, stderr.String())
+		}
+		want := "BUS_EVENTS_API_URL=http://events.example.test/local/v1\n"
+		if stdout.String() != want {
+			t.Fatalf("unexpected BUS_EVENTS_URL-derived output:\nwant %q\ngot  %q", want, stdout.String())
+		}
+	})
+}
+
 func TestRunLocalClientDefaultsPreserveProcessAndDotenvValues(t *testing.T) {
 	tempDir := t.TempDir()
 	buildFakeEnvSubcommand(t, tempDir, "env")

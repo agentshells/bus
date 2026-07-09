@@ -2548,10 +2548,9 @@ func applyDispatcherDefaultEnv(env []string) []string {
 			values[key] = entry[eq+1:]
 		}
 	}
-	host := busHostFromEnv(values)
 	out := append([]string{}, env...)
 	for _, item := range dispatcherDefaultEnv {
-		value := dispatcherDefaultValue(item, host)
+		value := dispatcherDefaultValue(item, values)
 		if item.key == "" || value == "" {
 			continue
 		}
@@ -2573,17 +2572,31 @@ func busHostFromEnv(values map[string]string) string {
 	return defaultBusHost
 }
 
-// dispatcherDefaultValue derives dispatcher defaults that depend on BUS_HOST.
+// dispatcherDefaultValue derives dispatcher defaults that depend on BUS_HOST
+// and configured local service ports.
 // Used by: applyDispatcherDefaultEnv.
-func dispatcherDefaultValue(item defaultEnvEntry, host string) string {
+func dispatcherDefaultValue(item defaultEnvEntry, values map[string]string) string {
+	host := busHostFromEnv(values)
 	switch item.key {
 	case "BUS_EVENTS_API_URL":
-		return dispatcherLocalHTTPURL(host, "8081", "/local/v1")
+		if eventsURL := strings.TrimSpace(values["BUS_EVENTS_URL"]); eventsURL != "" {
+			return eventsURL
+		}
+		return dispatcherLocalHTTPURL(host, dispatcherDefaultPort(values, "BUS_EVENTS_PORT", "8081"), "/local/v1")
 	case "BUS_WORKERS_API_URL":
-		return dispatcherLocalHTTPURL(host, "8090", "/local/v1")
+		return dispatcherLocalHTTPURL(host, dispatcherDefaultPort(values, "BUS_API_PORT", "8090"), "/local/v1")
 	default:
 		return item.value
 	}
+}
+
+// dispatcherDefaultPort returns a configured local service port or fallback.
+// Used by: dispatcherDefaultValue.
+func dispatcherDefaultPort(values map[string]string, key string, fallback string) string {
+	if port := strings.TrimSpace(values[key]); port != "" {
+		return port
+	}
+	return fallback
 }
 
 // dispatcherLocalHTTPURL builds a local HTTP URL from a host, port, and path.
