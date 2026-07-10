@@ -39,5 +39,6 @@ while IFS= read -r script; do
 done < <(find "${ROOT_DIR}/tests/e2e" -maxdepth 1 -type f -name '[0-9][0-9][0-9]-*.sh' | LC_ALL=C sort)
 
 "$TEST_SUBJECT" help --format opencli | grep -q '"io.busdk.environment"'
+"$TEST_SUBJECT" help --format opencli | grep -q '"name": "BUS_PWD"'
 "$TEST_SUBJECT" help --format opencli | grep -q '"title": "bus"'
 echo "e2e.sh: PASS"

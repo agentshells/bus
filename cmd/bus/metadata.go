@@ -130,10 +130,11 @@ func metadataDocument() openCLIDocument {
 				"version":      "0.1",
 				"sourceModule": "bus",
 				"precedence":   []string{"process environment", ".env", "dispatcher defaults"},
-				"dotenv":       []map[string]string{{"path": ".env", "description": "Workspace environment loaded before dispatch."}},
+				"dotenv":       []map[string]string{{"path": ".env", "description": "Loaded from the effective workspace; the invocation .env is first inspected for BUS_PWD."}},
 				"variables": []map[string]interface{}{
 					envVar("BUS_BUSFILE", "Busfile path used for dispatcher batch execution."),
 					envVar("BUS_PERF", "Enable dispatcher performance timing output."),
+					envVar("BUS_PWD", "Default effective working directory applied before workspace dotenv loading and dispatch; explicit CLI chdir state overrides it."),
 					envVar("BUS_HOST", "Loopback host used when deriving local Bus service URL defaults such as BUS_EVENTS_API_URL and BUS_WORKERS_API_URL."),
 					envVar("BUS_API_PORT", "Local Bus API port used when deriving BUS_WORKERS_API_URL if BUS_WORKERS_API_URL is unset."),
 					envVar("BUS_EVENTS_PORT", "Local Bus Events port used when deriving BUS_EVENTS_API_URL if BUS_EVENTS_API_URL and BUS_EVENTS_URL are unset."),

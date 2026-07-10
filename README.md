@@ -49,6 +49,24 @@ Use `KEY=VALUE` or `export KEY=VALUE` lines; blank lines and `#` comments are
 ignored. The dispatcher does not filter names to Bus-specific variables; any
 valid environment variable name is passed through to the child command.
 
+Set `BUS_PWD` to make a workspace the default effective working directory. For
+example, a supervisor checkout can place this in its `.env`:
+
+```sh
+BUS_PWD=projects/busdk
+```
+
+Unless `-C`, `--chdir`, or `--no-chdir` is explicit, `bus` first checks the
+process environment and then the invocation directory's `.env` for `BUS_PWD`.
+Relative values are resolved from the invocation directory. The dispatcher then
+changes into that workspace before parsing the command, loading the workspace's
+`.env`, resolving busfiles, and starting child commands, so relative files such
+as `services.yml` come from the configured workspace. Only `BUS_PWD` is
+bootstrapped from the invocation directory's `.env`; other dotenv values come
+from the effective workspace. The resolved `BUS_PWD` passed to child commands is
+absolute, and the child `PWD` environment entry is updated to match. This keeps
+nested `bus` invocations and modules that inspect `PWD` in the same workspace.
+
 After `.env` loading, `bus` supplies standard non-secret local client URL and
 token defaults for child commands when they are otherwise unset. With
 `BUS_HOST` unset, the effective URL defaults are:

@@ -550,6 +550,176 @@ func TestRunLoadsDotenvFromChdirDirectory(t *testing.T) {
 	})
 }
 
+func TestRunUsesBUSPWDFromInvocationDotenv(t *testing.T) {
+	tempDir := t.TempDir()
+	buildFakeWorkspaceSubcommand(t, tempDir, "workspace")
+	root := t.TempDir()
+	workspace := filepath.Join(root, "projects", "busdk")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("BUS_PWD=projects/busdk\nBUS_LAUNCHER_ONLY=not-loaded\n"), 0o600); err != nil {
+		t.Fatalf("write invocation .env: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".env"), []byte("BUS_TARGET_ENV=from-target\n"), 0o600); err != nil {
+		t.Fatalf("write workspace .env: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "services.yml"), []byte("workspace-stack\n"), 0o600); err != nil {
+		t.Fatalf("write services.yml: %v", err)
+	}
+	env := unsetEnv(prependPath(os.Environ(), tempDir), "BUS_PWD")
+
+	withChdir(t, root, func() {
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		code := dispatch.Run([]string{"bus", "workspace"}, env, nil, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("expected exit code 0, got %d (stderr: %q)", code, stderr.String())
+		}
+
+		values := map[string]string{}
+		for _, line := range strings.Split(strings.TrimSpace(stdout.String()), "\n") {
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) == 2 {
+				values[parts[0]] = parts[1]
+			}
+		}
+		for _, key := range []string{"cwd", "PWD", "BUS_PWD"} {
+			gotInfo, err := os.Stat(values[key])
+			if err != nil {
+				t.Fatalf("stat %s %q: %v", key, values[key], err)
+			}
+			workspaceInfo, err := os.Stat(workspace)
+			if err != nil {
+				t.Fatalf("stat workspace: %v", err)
+			}
+			if !os.SameFile(gotInfo, workspaceInfo) {
+				t.Fatalf("expected %s %q to identify workspace %q", key, values[key], workspace)
+			}
+		}
+		if values["services"] != "workspace-stack" {
+			t.Fatalf("expected services.yml from BUS_PWD workspace, got %q", values["services"])
+		}
+		if values["BUS_TARGET_ENV"] != "from-target" {
+			t.Fatalf("expected target .env value, got %q", values["BUS_TARGET_ENV"])
+		}
+		if values["BUS_LAUNCHER_ONLY"] != "" {
+			t.Fatalf("expected launcher .env to bootstrap only BUS_PWD, got %q", values["BUS_LAUNCHER_ONLY"])
+		}
+	})
+}
+
+func TestRunProcessBUSPWDOverridesInvocationDotenv(t *testing.T) {
+	tempDir := t.TempDir()
+	buildFakeEnvSubcommand(t, tempDir, "env")
+	root := t.TempDir()
+	defaultWorkspace := filepath.Join(root, "default")
+	overrideWorkspace := filepath.Join(root, "override")
+	for _, dir := range []string{defaultWorkspace, overrideWorkspace} {
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatalf("mkdir workspace %q: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("BUS_PWD=default\n"), 0o600); err != nil {
+		t.Fatalf("write invocation .env: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(defaultWorkspace, ".env"), []byte("BUS_DOTENV_SCOPE=from-invocation-dotenv\n"), 0o600); err != nil {
+		t.Fatalf("write default workspace .env: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(overrideWorkspace, ".env"), []byte("BUS_DOTENV_SCOPE=from-process-pwd\n"), 0o600); err != nil {
+		t.Fatalf("write override workspace .env: %v", err)
+	}
+	env := setEnv(prependPath(os.Environ(), tempDir), "BUS_PWD", "override")
+
+	withChdir(t, root, func() {
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		code := dispatch.Run([]string{"bus", "env", "BUS_DOTENV_SCOPE", "BUS_PWD"}, env, nil, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("expected exit code 0, got %d (stderr: %q)", code, stderr.String())
+		}
+		lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+		if len(lines) != 2 || lines[0] != "BUS_DOTENV_SCOPE=from-process-pwd" || !strings.HasPrefix(lines[1], "BUS_PWD=") {
+			t.Fatalf("unexpected process BUS_PWD output: %q", stdout.String())
+		}
+		gotInfo, err := os.Stat(strings.TrimPrefix(lines[1], "BUS_PWD="))
+		if err != nil {
+			t.Fatalf("stat resolved BUS_PWD: %v", err)
+		}
+		wantInfo, err := os.Stat(overrideWorkspace)
+		if err != nil {
+			t.Fatalf("stat override workspace: %v", err)
+		}
+		if !os.SameFile(gotInfo, wantInfo) {
+			t.Fatalf("expected process BUS_PWD to resolve override workspace, got %q", lines[1])
+		}
+	})
+}
+
+func TestRunExplicitChdirOverridesBUSPWD(t *testing.T) {
+	tempDir := t.TempDir()
+	buildFakeEnvSubcommand(t, tempDir, "env")
+	root := t.TempDir()
+	defaultWorkspace := filepath.Join(root, "default")
+	explicitWorkspace := filepath.Join(root, "explicit")
+	for _, dir := range []string{defaultWorkspace, explicitWorkspace} {
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatalf("mkdir workspace %q: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("BUS_PWD=default\n"), 0o600); err != nil {
+		t.Fatalf("write invocation .env: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(defaultWorkspace, ".env"), []byte("BUS_DOTENV_SCOPE=from-bus-pwd\n"), 0o600); err != nil {
+		t.Fatalf("write default workspace .env: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(explicitWorkspace, ".env"), []byte("BUS_DOTENV_SCOPE=from-chdir\n"), 0o600); err != nil {
+		t.Fatalf("write explicit workspace .env: %v", err)
+	}
+	env := unsetEnv(prependPath(os.Environ(), tempDir), "BUS_PWD")
+
+	withChdir(t, root, func() {
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		code := dispatch.Run([]string{"bus", "-C", explicitWorkspace, "env", "BUS_DOTENV_SCOPE"}, env, nil, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("expected exit code 0, got %d (stderr: %q)", code, stderr.String())
+		}
+		if stdout.String() != "BUS_DOTENV_SCOPE=from-chdir\n" {
+			t.Fatalf("expected explicit --chdir .env value, got %q", stdout.String())
+		}
+	})
+}
+
+func TestRunNoChdirDisablesBUSPWD(t *testing.T) {
+	tempDir := t.TempDir()
+	buildFakeEnvSubcommand(t, tempDir, "env")
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("BUS_PWD=workspace\nBUS_DOTENV_SCOPE=from-launcher\n"), 0o600); err != nil {
+		t.Fatalf("write invocation .env: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".env"), []byte("BUS_DOTENV_SCOPE=from-bus-pwd\n"), 0o600); err != nil {
+		t.Fatalf("write workspace .env: %v", err)
+	}
+	env := unsetEnv(prependPath(os.Environ(), tempDir), "BUS_PWD")
+
+	withChdir(t, root, func() {
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		code := dispatch.Run([]string{"bus", "--no-chdir", "env", "BUS_DOTENV_SCOPE"}, env, nil, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("expected exit code 0, got %d (stderr: %q)", code, stderr.String())
+		}
+		if stdout.String() != "BUS_DOTENV_SCOPE=from-launcher\n" {
+			t.Fatalf("expected --no-chdir launcher value, got %q", stdout.String())
+		}
+	})
+}
+
 func TestRunRejectsInvalidDotenv(t *testing.T) {
 	workspace := t.TempDir()
 	if err := os.WriteFile(filepath.Join(workspace, ".env"), []byte("1INVALID=value\n"), 0o600); err != nil {
@@ -1093,6 +1263,63 @@ func main() {
 	}
 	if err := os.WriteFile(filepath.Join(sourceDir, "go.mod"), []byte(goMod), 0o600); err != nil {
 		t.Fatalf("write fake env go.mod: %v", err)
+	}
+
+	outputName := "bus-" + subcommand
+	if runtime.GOOS == "windows" {
+		outputName += ".exe"
+	}
+	outputPath := filepath.Join(targetDir, outputName)
+
+	cmd := exec.Command("go", "build", "-o", outputPath)
+	cmd.Dir = sourceDir
+	cmd.Env = append(os.Environ(), "GOFLAGS="+strings.TrimSpace(os.Getenv("GOFLAGS")+" -buildvcs=false"))
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go build failed: %v\n%s", err, string(output))
+	}
+
+	return outputPath
+}
+
+func buildFakeWorkspaceSubcommand(t *testing.T, targetDir, subcommand string) string {
+	t.Helper()
+
+	sourceDir := t.TempDir()
+	goMod := "module bus-workspace-subcmd\n\ngo 1.22\n"
+	source := `package main
+
+import (
+	"fmt"
+	"os"
+	"strings"
+)
+
+func main() {
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	services, err := os.ReadFile("services.yml")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	fmt.Printf("cwd=%s\n", cwd)
+	fmt.Printf("services=%s\n", strings.TrimSpace(string(services)))
+	fmt.Printf("BUS_TARGET_ENV=%s\n", os.Getenv("BUS_TARGET_ENV"))
+	fmt.Printf("BUS_LAUNCHER_ONLY=%s\n", os.Getenv("BUS_LAUNCHER_ONLY"))
+	fmt.Printf("PWD=%s\n", os.Getenv("PWD"))
+	fmt.Printf("BUS_PWD=%s\n", os.Getenv("BUS_PWD"))
+}
+`
+
+	sourcePath := filepath.Join(sourceDir, "main.go")
+	if err := os.WriteFile(sourcePath, []byte(source), 0o600); err != nil {
+		t.Fatalf("write fake workspace main.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceDir, "go.mod"), []byte(goMod), 0o600); err != nil {
+		t.Fatalf("write fake workspace go.mod: %v", err)
 	}
 
 	outputName := "bus-" + subcommand
@@ -1664,6 +1891,38 @@ func TestRunBusfileRelativePathResolvedAfterGlobalChdir(t *testing.T) {
 		}
 		if stdout.String() != "ACCOUNTS:alpha\n" {
 			t.Fatalf("expected busfile execution output, got %q", stdout.String())
+		}
+		if stderr.Len() != 0 {
+			t.Fatalf("expected no stderr, got %q", stderr.String())
+		}
+	})
+}
+
+func TestRunBusfileUsesBUSPWDWorkspace(t *testing.T) {
+	tempDir := t.TempDir()
+	buildFakeSubcommand(t, tempDir, "accounts", "ACCOUNTS")
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("BUS_PWD=workspace\n"), 0o600); err != nil {
+		t.Fatalf("write invocation .env: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "replay.bus"), []byte("accounts from-bus-pwd\n"), 0o600); err != nil {
+		t.Fatalf("write busfile: %v", err)
+	}
+	env := unsetEnv(prependPath(os.Environ(), tempDir), "BUS_PWD")
+
+	withChdir(t, root, func() {
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		code := dispatch.Run([]string{"bus", "replay.bus"}, env, nil, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("expected exit 0, got %d (stderr: %q)", code, stderr.String())
+		}
+		if stdout.String() != "ACCOUNTS:from-bus-pwd\n" {
+			t.Fatalf("expected BUS_PWD busfile output, got %q", stdout.String())
 		}
 		if stderr.Len() != 0 {
 			t.Fatalf("expected no stderr, got %q", stderr.String())

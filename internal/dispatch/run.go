@@ -47,8 +47,26 @@ var dispatcherDefaultEnv = []defaultEnvEntry{
 // Used by: dispatcherLocalHTTPURL.
 const defaultBusHost = "127.0.0.1"
 
-// Run dispatches to a "bus-<command>" executable located on PATH.
+// dispatcherWorkdirEnv names the dispatcher-level configured working directory.
+// Used by: resolveConfiguredWorkdir before command parsing and dotenv loading.
+const dispatcherWorkdirEnv = "BUS_PWD"
+
+// Run resolves dispatcher configuration and dispatches one Bus invocation.
+// Used by: cmd/bus as the public CLI entrypoint.
 func Run(args []string, env []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) int {
+	workdir, resolvedEnv, err := resolveConfiguredWorkdir(args[1:], env)
+	if err != nil {
+		fmt.Fprintf(stderr, "bus: %v\n", err)
+		return 2
+	}
+	return runWithinWorkdir(workdir, stderr, func() int {
+		return run(args, resolvedEnv, stdin, stdout, stderr)
+	})
+}
+
+// run parses and executes one Bus invocation from its already-resolved working directory.
+// Used by: Run after BUS_PWD bootstrap handling.
+func run(args []string, env []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) int {
 	busfileOpts, busfileMode, err := parseBusfileMode(args[1:])
 	if err != nil {
 		fmt.Fprintf(stderr, "bus: invalid usage: %v\n", err)
@@ -1992,7 +2010,7 @@ func resolveBusfileCandidatePath(workdir, path string) string {
 }
 
 // runWithinWorkdir executes one dispatcher operation inside an optional effective working directory.
-// Used by: runBusfiles so busfile resolution and child execution honor dispatcher-level --chdir.
+// Used by: Run for BUS_PWD and runBusfiles for dispatcher-level --chdir.
 func runWithinWorkdir(workdir string, stderr io.Writer, fn func() int) int {
 	if workdir == "" {
 		return fn()
@@ -2316,6 +2334,7 @@ Usage:
 
 Behavior:
   Dispatches bus-<command> from PATH and passes the remaining arguments through unchanged.
+  Uses BUS_PWD as the default working directory when no CLI chdir override is present.
   Loads .env from the effective working directory when present; process environment wins.
   Tip: use `+"`bus shell`"+` for interactive command entry.
 
@@ -2386,6 +2405,82 @@ func withPerfEnv(env []string, perf bool) []string {
 	return out
 }
 
+// resolveConfiguredWorkdir resolves BUS_PWD from the process or invocation-directory .env.
+// Used by: Run before changing directory, parsing commands, or loading workspace dotenv.
+func resolveConfiguredWorkdir(args []string, env []string) (string, []string, error) {
+	if hasExplicitDispatcherChdir(args) {
+		return "", env, nil
+	}
+
+	workdir, configured := lookupEnv(env, dispatcherWorkdirEnv)
+	if !configured {
+		entries, err := loadDotenvEntries(".env")
+		if err != nil {
+			return "", env, fmt.Errorf("failed to load .env: %w", err)
+		}
+		for _, entry := range entries {
+			if entry.key == dispatcherWorkdirEnv {
+				workdir = entry.value
+				configured = true
+			}
+		}
+	}
+	if !configured || workdir == "" {
+		return "", env, nil
+	}
+
+	absolute, err := filepath.Abs(workdir)
+	if err != nil {
+		return "", env, fmt.Errorf("failed to resolve %s %q: %w", dispatcherWorkdirEnv, workdir, err)
+	}
+	absolute = filepath.Clean(absolute)
+	resolvedEnv := withEnvValue(env, dispatcherWorkdirEnv, absolute)
+	resolvedEnv = withEnvValue(resolvedEnv, "PWD", absolute)
+	return absolute, resolvedEnv, nil
+}
+
+// hasExplicitDispatcherChdir reports whether CLI workdir state overrides BUS_PWD.
+// Used by: resolveConfiguredWorkdir while scanning leading dispatcher and busfile flags.
+func hasExplicitDispatcherChdir(args []string) bool {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--":
+			return false
+		case arg == "-C" || arg == "--chdir" || arg == "--no-chdir":
+			return true
+		case arg == "-h" || arg == "--help" || arg == "-V" || arg == "--version":
+			return false
+		case arg == "--color" || arg == "-o" || arg == "--output" || arg == "-f" || arg == "--format" || arg == "--transaction" || arg == "--scope":
+			i++
+		case strings.HasPrefix(arg, "-"):
+			continue
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+// withEnvValue returns an environment with one key set to a deterministic value.
+// Used by: resolveConfiguredWorkdir to pass an absolute BUS_PWD to child invocations.
+func withEnvValue(env []string, key string, value string) []string {
+	prefix := key + "="
+	out := append([]string{}, env...)
+	found := false
+	for i, entry := range out {
+		if !strings.HasPrefix(entry, prefix) {
+			continue
+		}
+		out[i] = prefix + value
+		found = true
+	}
+	if !found {
+		out = append(out, prefix+value)
+	}
+	return out
+}
+
 // dotenvEntry stores one parsed .env assignment.
 // Used by: parseDotenv and overlayDotenvEnv while loading the dispatcher environment.
 type dotenvEntry struct {
@@ -2400,18 +2495,28 @@ func loadWorkingDirDotenv(env []string, workdir string) ([]string, error) {
 	if workdir != "" {
 		path = filepath.Join(workdir, ".env")
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return env, nil
-		}
-		return env, err
-	}
-	entries, err := parseDotenv(path, string(data))
+	entries, err := loadDotenvEntries(path)
 	if err != nil {
 		return env, err
 	}
 	return overlayDotenvEnv(env, entries), nil
+}
+
+// loadDotenvEntries reads and parses one dotenv file when it exists.
+// Used by: resolveConfiguredWorkdir bootstrap and loadWorkingDirDotenv workspace loading.
+func loadDotenvEntries(path string) ([]dotenvEntry, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	entries, err := parseDotenv(path, string(data))
+	if err != nil {
+		return nil, err
+	}
+	return entries, nil
 }
 
 // parseDotenv parses the deterministic dotenv subset used by Bus CLI entrypoints.
