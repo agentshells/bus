@@ -79,8 +79,8 @@ Agent-facing instructions for the `bus` core dispatcher repository. This module 
 
 ## Performance guardrails (Go optimization guide)
 
-- Optimization guide reference: online at `https://docs.busdk.com/implementation/go-optimization-guide` and local mirror typically at `../docs/docs/implementation/go-optimization-guide.md`.
-- Standing guidance: when review/benchmark work reveals a reusable optimization anti-pattern or workflow improvement, update the local guide at `../docs/docs/implementation/go-optimization-guide.md` in the same change (not just repo-local TODOs).
+- Optimization guide reference: online at `https://docs.busdk.com/implementation/go-optimization-guide` and local mirror typically at the parent checkout's `../docs/docs/implementation/go-optimization-guide.md`.
+- Standing guidance: when review/benchmark work reveals a reusable optimization anti-pattern or workflow improvement, update the parent checkout's local guide `../docs/docs/implementation/go-optimization-guide.md` in the same change (not just repo-local TODOs).
 - Profile/benchmark first: for performance changes, capture a baseline benchmark (or pprof where appropriate) before changing code, then compare after.
 - Avoid repeated env-slice scans/copies in per-command loops. If command env keys are constant, build once and mutate minimally instead of re-running full `upsert` passes.
 - In hot loops, preallocate maps/slices with known bounds (`make(..., len(...))`) and avoid repeated reallocation churn.
@@ -116,8 +116,8 @@ This AGENTS.md was grounded in the following BusDK spec pages:
 
 ## Session carry-forward notes
 
-- When starting from this repo alone, editing `../docs/docs/implementation/go-optimization-guide.md` may require higher-level workspace access; from the super-project root this should be editable directly.
-- When working from the BusDK superproject root, the shared dispatcher SDD is at `sdd/docs/modules/bus.md`, not under `bus/sdd/...`.
+- When starting from this repo alone, editing the parent checkout's `../docs/docs/implementation/go-optimization-guide.md` may require higher-level workspace access; from the super-project root this should be editable directly.
+- When working from the BusDK superproject root (the parent workspace), the shared dispatcher SDD is at `sdd/docs/modules/bus.md` there, not under `bus/sdd/...`.
 - Optimization-guide updates must be additive: do not remove prior guide content when adding new patterns.
 - Dispatcher perf lines must render the duration field with Go duration tokens (`time.Duration.String()`), not fixed decimal seconds, so short operations do not collapse to `0.000`.
 - For content searches limited to Go files in this repo from the superproject root, use `rg ... bus --glob '*.go'`; do not pass recursive shell-glob paths like `bus/**/*.go` as positional arguments to `rg`.
